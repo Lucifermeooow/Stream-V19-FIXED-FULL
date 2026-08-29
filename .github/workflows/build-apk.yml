@@ -1,112 +1,54 @@
-name: Build Stream V19 APK
-
-on:
-  workflow_dispatch:
-
-  push:
-    branches:
-      - main
-
-concurrency:
-  group: stream-v19-build
-  cancel-in-progress: true
-
-jobs:
-  build:
-    name: Build Stream V19 Release APK
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.47.2"
-          channel: stable
-          cache: true
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android licenses
+      - name: Build Stream V19 APK
+        shell: bash
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.vfs.watch=false"
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
+          set -e
 
-      - name: Create local.properties
-        run: |
-          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
-          echo "sdk.dir=$ANDROID_HOME" >> android/local.properties
+          echo "========================================"
+          echo "BUILD STREAM V19"
+          echo "========================================"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.3.1"
+          cd "$GITHUB_WORKSPACE"
 
-      - name: Verify toolchain
-        run: |
-          flutter --version
-          dart --version
-          gradle --version
-
-      - name: Flutter Clean
-        run: flutter clean
-
-      - name: Flutter Pub Get
-        run: flutter pub get
-
-      - name: Precache Flutter Android artifacts
-        run: flutter precache --android
-
-      - name: Patch rtmp_streaming 2.0.1
-        run: |
-          PLUGIN="$HOME/.pub-cache/hosted/pub.dev/rtmp_streaming-2.0.1/android/build.gradle"
-
-          test -f "$PLUGIN"
-
-          python3 tool/patch_rtmp_streaming.py "$PLUGIN"
+          flutter clean
+          flutter pub get
+          flutter precache --android
 
           echo ""
-          echo "Patched plugin:"
-          sed -n '1,90p' "$PLUGIN"
+          echo "Building APK..."
 
-      - name: Flutter Analyze
-        run: flutter analyze
+          flutter build apk --release
 
-      - name: Flutter Test
-        run: flutter test
-
-      - name: Build Stream V19 APK
-        run: flutter build apk --release
-
-      - name: Verify APK
-        run: |
-          test -f build/app/outputs/flutter-apk/app-release.apk
-
-          mkdir -p release
-
-          cp \
-            build/app/outputs/flutter-apk/app-release.apk \
-            release/Stream-V19-release.apk
-
+          echo ""
           echo "========================================"
-          echo "STREAM V19 APK CREATED"
+          echo "APK SEARCH"
           echo "========================================"
 
-          ls -lh release/Stream-V19-release.apk
+          find "$GITHUB_WORKSPACE" \
+            -type f \
+            -name "*.apk" \
+            -print
 
-      - name: Upload Stream V19 APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Stream-V19-APK
-          path: release/Stream-V19-release.apk
-          if-no-files-found: error
-          retention-days: 30
+          APK=$(find "$GITHUB_WORKSPACE/build" \
+            -type f \
+            -name "*.apk" \
+            | head -n 1 || true)
+
+          if [ -z "$APK" ]; then
+            echo ""
+            echo "ERROR: No APK found."
+            exit 1
+          fi
+
+          echo ""
+          echo "APK FOUND:"
+          echo "$APK"
+
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/artifacts/Stream-V19-release.apk"
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/artifacts/Stream-V19-release.apk"
