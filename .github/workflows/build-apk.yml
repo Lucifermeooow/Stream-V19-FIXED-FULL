@@ -1,34 +1,111 @@
-      - name: Build Stream V19 APK
+name: Stream V19 APK
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: stream-v19
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Stream V19
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.2"
+          channel: stable
+          cache: true
+
+      - name: Setup Android
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Create local.properties
+        run: |
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+          echo "sdk.dir=$ANDROID_HOME" >> android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Disable Gradle File Watching
+        run: |
+          mkdir -p "$HOME/.gradle"
+          echo "org.gradle.vfs.watch=false" >> "$HOME/.gradle/gradle.properties"
+          echo "org.gradle.daemon=false" >> "$HOME/.gradle/gradle.properties"
+
+      - name: Flutter Clean
+        run: |
+          flutter clean
+
+      - name: Flutter Pub Get
+        run: |
+          flutter pub get
+
+      - name: Precache Flutter Android
+        run: |
+          flutter precache --android
+
+      - name: Patch rtmp_streaming
+        shell: bash
+        run: |
+          PLUGIN="$HOME/.pub-cache/hosted/pub.dev/rtmp_streaming-2.0.1/android/build.gradle"
+
+          if [ ! -f "$PLUGIN" ]; then
+            echo "rtmp_streaming build.gradle not found"
+            exit 1
+          fi
+
+          perl -0pi -e 's/kotlinOptions\s*\{\s*jvmTarget\s*=\s*"17"\s*\}/kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }/s' "$PLUGIN"
+
+          echo "rtmp_streaming patched."
+
+      - name: Flutter Analyze
+        run: |
+          flutter analyze
+
+      - name: Flutter Test
+        run: |
+          flutter test
+
+      - name: Build APK
         shell: bash
         env:
-          GRADLE_OPTS: "-Dorg.gradle.vfs.watch=false"
+          GRADLE_OPTS: "-Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false"
         run: |
           set -e
 
-          echo "========================================"
-          echo "BUILD STREAM V19"
-          echo "========================================"
-
-          cd "$GITHUB_WORKSPACE"
-
-          flutter clean
-          flutter pub get
-          flutter precache --android
-
-          echo ""
-          echo "Building APK..."
-
           flutter build apk --release
 
-          echo ""
-          echo "========================================"
-          echo "APK SEARCH"
-          echo "========================================"
+          echo "Searching for APK..."
 
           find "$GITHUB_WORKSPACE" \
             -type f \
             -name "*.apk" \
             -print
+
+          mkdir -p artifacts
 
           APK=$(find "$GITHUB_WORKSPACE/build" \
             -type f \
@@ -36,19 +113,21 @@
             | head -n 1 || true)
 
           if [ -z "$APK" ]; then
-            echo ""
-            echo "ERROR: No APK found."
+            echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo ""
           echo "APK FOUND:"
           echo "$APK"
 
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp "$APK" artifacts/Stream-V19-release.apk
 
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/artifacts/Stream-V19-release.apk"
+          ls -lh artifacts/Stream-V19-release.apk
 
-          ls -lh \
-            "$GITHUB_WORKSPACE/artifacts/Stream-V19-release.apk"
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Stream-V19-APK
+          path: artifacts/Stream-V19-release.apk
+          if-no-files-found: error
+          retention-days: 30
